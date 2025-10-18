@@ -1,15 +1,17 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import requests  
+import requests
 import json
 
+# --- 1. CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
     page_title="Dashboard COVID-19 Colombia",
     page_icon="🦠",
     layout="wide"
 )
 
+# --- FUNCIÓN DE CARGA Y TRANSFORMACIÓN DE DATOS (FASE 1) ---
 @st.cache_data
 def load_data(file_path):
     """
@@ -17,7 +19,7 @@ def load_data(file_path):
     También descarga el archivo GeoJSON para el mapa.
     """
     try:
-        df = pd.read_csv(file_path, compression='zip')
+        df = pd.read_csv(file_path, compression='zip') # Leemos el ZIP
     except FileNotFoundError:
         st.error(f"Error: No se encontró el archivo en {file_path}.")
         return None, None
@@ -39,7 +41,6 @@ def load_data(file_path):
     df['departamento_mapa'] = df['nombre_departamento'].str.upper()
     df['departamento_mapa'] = df['departamento_mapa'].str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8')
     
-    # Diccionario de reemplazos para unificar nombres
     replacements = {
         'BOGOTA D.C.': 'BOGOTA',
         'CARTAGENA D.T. Y C.': 'BOLIVAR', 
@@ -65,75 +66,59 @@ def load_data(file_path):
     return df, colombia_geojson
 
 # --- CARGA DE DATOS ---
-file_path = 'casos_covid_colombia_PROCESADO.zip' 
+file_path = 'casos_covid_colombia_PROCESADO.zip' # Apuntamos al ZIP
 df, colombia_geojson = load_data(file_path)
 
 if df is None:
     st.stop()
 
-# --- FILTROS INTERACTIVOS
+# --- FASE 3: FILTROS INTERACTIVOS (CON BOTÓN) ---
 st.sidebar.header("Filtros Interactivos")
 
-# Usamos un st.form para agrupar los filtros
 with st.sidebar.form(key='filtro_form'):
-    # 1. Filtro por Rango de Fechas
-    # Usamos 'fecha_de_diagnostico' ya que es más confiable
     min_fecha = df['fecha_de_diagnostico'].min().date()
     max_fecha = df['fecha_de_diagnostico'].max().date()
-
     fecha_inicio, fecha_fin = st.date_input(
         "Selecciona el rango de fechas:",
         [min_fecha, max_fecha],
         min_value=min_fecha,
         max_value=max_fecha
     )
-
-    # 2. Filtro por Departamento
     departamentos = sorted(df['nombre_departamento'].unique())
     deptos_seleccionados = st.multiselect(
         "Selecciona Departamentos:",
         departamentos,
         default=departamentos
     )
-
-    # 3. Filtro por Grupo de Edad
     bins = [0, 18, 30, 50, 70, 110]
     labels = ['0-17', '18-29', '30-49', '50-69', '70+']
     df['grupo_edad'] = pd.cut(df['edad'], bins=bins, labels=labels, right=False)
-
     edades_seleccionadas = st.multiselect(
         "Selecciona Grupos de Edad:",
         labels,
         default=labels
     )
-    
-    # --- EL BOTÓN PARA APLICAR FILTROS ---
     submit_button = st.form_submit_button(label='Aplicar Filtros 🚀')
 
-
 # --- HERRAMIENTA DE DEBUG PARA EL MAPA ---
+# (Mantenemos el resto del sidebar fuera del 'form')
 st.sidebar.subheader("Ayuda para el Mapa (Debug)")
 if st.sidebar.checkbox("Mostrar nombres de departamentos"):
     st.sidebar.write("**Nombres en tu CSV (normalizados):**")
     st.sidebar.dataframe(sorted(df['departamento_mapa'].unique()))
-    
     if colombia_geojson:
         st.sidebar.write("**Nombres en el archivo del Mapa (GeoJSON):**")
-        # Corrección de KeyError: 'NOMBRE_DANE' -> 'NOMBRE_DPT'
         nombres_mapa = sorted([feature['properties']['NOMBRE_DPT'] for feature in colombia_geojson['features']])
         st.sidebar.dataframe(nombres_mapa)
     st.sidebar.info("Compara las listas. Si un nombre no coincide, añádelo al diccionario 'replacements'.")
 
-# --- Verificación de Datos (Fase 1) ---
 if st.sidebar.checkbox("Mostrar datos crudos filtrados"):
     st.header("Datos Filtrados")
     st.dataframe(df_filtrado.head(50))
 
-
 # --- APLICAR FILTROS AL DATAFRAME ---
 fecha_inicio = pd.to_datetime(fecha_inicio)
 fecha_fin = pd.to_datetime(fecha_fin)
-
 df_filtrado = df[
     (df['fecha_de_diagnostico'] >= fecha_inicio) &
     (df['fecha_de_diagnostico'] <= fecha_fin) &
@@ -166,94 +151,97 @@ col4.metric("Tasa de Letalidad", f"{tasa_letalidad:.2f}%")
 
 st.write("---")
 
-col_izq, col_der = st.columns((7, 3))
+# --- INICIA EL CAMBIO: Verificamos si el DataFrame filtrado está vacío ---
+if df_filtrado.empty:
+    st.warning("No se encontraron datos para los filtros seleccionados. Por favor, amplía tu búsqueda.")
+else:
+    # Si hay datos, dibujamos todos los gráficos
+    col_izq, col_der = st.columns((7, 3))
 
-with col_izq:
-    # 2.1 Gráfico de Evolución Temporal
-    st.subheader("Evolución Temporal de Casos")
-    df_tiempo = df_filtrado.groupby(pd.Grouper(key='fecha_de_diagnostico', freq='D')).agg(
-        Confirmados=('id_de_caso', 'count'),
-        Fallecidos=('estado', lambda x: (x == 'Fallecido').sum()),
-        Recuperados=('recuperado', lambda x: (x == 'Recuperado').sum())
-    ).reset_index()
-    
-    df_evolucion_melted = df_tiempo.melt(
-        id_vars='fecha_de_diagnostico', 
-        var_name='Tipo de Caso', 
-        value_name='Número de Casos'
-    )
-    
-    fig_lineas = px.line(df_evolucion_melted, 
-                         x='fecha_de_diagnostico', 
-                         y='Número de Casos', 
-                         color='Tipo de Caso',
-                         title='Casos Confirmados, Fallecidos y Recuperados por Día')
-    st.plotly_chart(fig_lineas, use_container_width=True)
-
-    # 2.2 Mapa Coroplético
-    st.subheader("Mapa de Casos por Departamento")
-    if colombia_geojson:
-        # Arreglo para Hover Name: Agrupar por ambos nombres
-        df_departamentos = df_filtrado.groupby(['departamento_mapa', 'nombre_departamento']).size().reset_index(name='Casos')
+    with col_izq:
+        # 2.1 Gráfico de Evolución Temporal
+        st.subheader("Evolución Temporal de Casos")
+        df_tiempo = df_filtrado.groupby(pd.Grouper(key='fecha_de_diagnostico', freq='D')).agg(
+            Confirmados=('id_de_caso', 'count'),
+            Fallecidos=('estado', lambda x: (x == 'Fallecido').sum()),
+            Recuperados=('recuperado', lambda x: (x == 'Recuperado').sum())
+        ).reset_index()
         
-        fig_mapa = px.choropleth(df_departamentos,
-                                 geojson=colombia_geojson,
-                                 locations='departamento_mapa',
-                                 featureidkey='properties.NOMBRE_DPT', # Corrección de KeyError
-                                 color='Casos',
-                                 hover_name='nombre_departamento', # Arreglo para mostrar nombre
-                                 color_continuous_scale="Reds", 
-                                 title='Casos Totales por Departamento')
-        
-        # Arreglo para que el mapa no desaparezca al filtrar
-        fig_mapa.update_geos(
-            center={"lat": 4.57, "lon": -74.29},
-            lataxis_range=[-4.5, 13.0],
-            lonaxis_range=[-80.0, -66.5],
-            visible=False
+        df_evolucion_melted = df_tiempo.melt(
+            id_vars='fecha_de_diagnostico', 
+            var_name='Tipo de Caso', 
+            value_name='Número de Casos'
         )
-        st.plotly_chart(fig_mapa, use_container_width=True)
-    else:
-        st.warning("No se pudo cargar el mapa (GeoJSON no disponible).")
+        
+        fig_lineas = px.line(df_evolucion_melted, 
+                             x='fecha_de_diagnostico', 
+                             y='Número de Casos', 
+                             color='Tipo de Caso',
+                             title='Casos Confirmados, Fallecidos y Recuperados por Día')
+        st.plotly_chart(fig_lineas, use_container_width=True)
 
-with col_der:
-    # 2.3 Gráfico de Barras - Departamentos más Afectados
-    st.subheader("Top 10 Departamentos Afectados")
-    df_top_deptos = df_filtrado.groupby('nombre_departamento').size().nlargest(10).reset_index(name='Casos')
-    
-    fig_barras_deptos = px.bar(df_top_deptos.sort_values(by='Casos', ascending=True),
-                               x='Casos',
-                               y='nombre_departamento',
-                               orientation='h',
-                               title='Top 10 Departamentos con más casos')
-    st.plotly_chart(fig_barras_deptos, use_container_width=True)
+        # 2.2 Mapa Coroplético
+        st.subheader("Mapa de Casos por Departamento")
+        if colombia_geojson:
+            df_departamentos = df_filtrado.groupby(['departamento_mapa', 'nombre_departamento']).size().reset_index(name='Casos')
+            
+            fig_mapa = px.choropleth(df_departamentos,
+                                     geojson=colombia_geojson,
+                                     locations='departamento_mapa',
+                                     featureidkey='properties.NOMBRE_DPT',
+                                     color='Casos',
+                                     hover_name='nombre_departamento',
+                                     color_continuous_scale="Reds", 
+                                     title='Casos Totales por Departamento')
+            
+            fig_mapa.update_geos(
+                center={"lat": 4.57, "lon": -74.29},
+                lataxis_range=[-4.5, 13.0],
+                lonaxis_range=[-80.0, -66.5],
+                visible=False
+            )
+            st.plotly_chart(fig_mapa, use_container_width=True)
+        else:
+            st.warning("No se pudo cargar el mapa (GeoJSON no disponible).")
 
-# --- 2.5 Criterio Propio (Dos gráficos más) ---
-st.write("---")
-st.header("Análisis Adicionales (Criterio Propio)")
+    with col_der:
+        # 2.3 Gráfico de Barras - Departamentos más Afectados
+        st.subheader("Top 10 Departamentos Afectados")
+        df_top_deptos = df_filtrado.groupby('nombre_departamento').size().nlargest(10).reset_index(name='Casos')
+        
+        fig_barras_deptos = px.bar(df_top_deptos.sort_values(by='Casos', ascending=True),
+                                   x='Casos',
+                                   y='nombre_departamento',
+                                   orientation='h',
+                                   title='Top 10 Departamentos con más casos')
+        st.plotly_chart(fig_barras_deptos, use_container_width=True)
 
-col_extra1, col_extra2 = st.columns(2)
+    # --- 2.5 Criterio Propio (Dos gráficos más) ---
+    st.write("---")
+    st.header("Análisis Adicionales (Criterio Propio)")
 
-with col_extra1:
-    st.subheader("Distribución de Casos por Edad y Sexo")
-    df_edad_sexo = df_filtrado.groupby(['grupo_edad', 'sexo']).size().reset_index(name='Casos')
-    
-    fig_edad_sexo = px.bar(df_edad_sexo,
-                           x='grupo_edad',
-                           y='Casos',
-                           color='sexo',
-                           barmode='group',
-                           title='Casos por Grupo de Edad y Sexo')
-    st.plotly_chart(fig_edad_sexo, use_container_width=True)
+    col_extra1, col_extra2 = st.columns(2)
 
-with col_extra2:
-    st.subheader("Distribución por Tipo de Contagio")
-    df_contagio = df_filtrado['tipo_de_contagio'].value_counts().reset_index()
-    df_contagio.columns = ['Tipo de Contagio', 'Casos']
-    
-    fig_contagio = px.pie(df_contagio,
-                          names='Tipo de Contagio',
-                          values='Casos',
-                          title='Fuentes de Contagio más comunes',
-                          hole=0.3)
-    st.plotly_chart(fig_contagio, use_container_width=True)
+    with col_extra1:
+        st.subheader("Distribución de Casos por Edad y Sexo")
+        df_edad_sexo = df_filtrado.groupby(['grupo_edad', 'sexo']).size().reset_index(name='Casos')
+        
+        fig_edad_sexo = px.bar(df_edad_sexo,
+                               x='grupo_edad',
+                               y='Casos',
+                               color='sexo',
+                               barmode='group',
+                               title='Casos por Grupo de Edad y Sexo')
+        st.plotly_chart(fig_edad_sexo, use_container_width=True)
+
+    with col_extra2:
+        st.subheader("Distribución por Tipo de Contagio")
+        df_contagio = df_filtrado['tipo_de_contagio'].value_counts().reset_index()
+        df_contagio.columns = ['Tipo de Contagio', 'Casos']
+        
+        fig_contagio = px.pie(df_contagio,
+                              names='Tipo de Contagio',
+                              values='Casos',
+                              title='Fuentes de Contagio más comunes',
+                              hole=0.3)
+        st.plotly_chart(fig_contagio, use_container_width=True)
