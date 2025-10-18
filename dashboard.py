@@ -17,7 +17,7 @@ def load_data(file_path):
     También descarga el archivo GeoJSON para el mapa.
     """
     try:
-        df = pd.read_csv(file_path)
+        df = pd.read_csv(file_path, compression='zip')
     except FileNotFoundError:
         st.error(f"Error: No se encontró el archivo en {file_path}.")
         return None, None
@@ -65,7 +65,7 @@ def load_data(file_path):
     return df, colombia_geojson
 
 # --- CARGA DE DATOS ---
-file_path = 'casos_covid_colombia_PROCESADO.csv' # Asegúrate que el nombre coincida
+file_path = 'casos_covid_colombia_PROCESADO.zip' 
 df, colombia_geojson = load_data(file_path)
 
 if df is None:
@@ -257,4 +257,3 @@ with col_extra2:
                           title='Fuentes de Contagio más comunes',
                           hole=0.3)
     st.plotly_chart(fig_contagio, use_container_width=True)
-    

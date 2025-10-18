@@ -3,3 +3,6 @@
 
 # Ignorar las carpetas de caché de Python
 __pycache__/
+
+# Ignorar archivos CSV grandes
+*.csv
