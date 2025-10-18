@@ -100,8 +100,21 @@ with st.sidebar.form(key='filtro_form'):
     )
     submit_button = st.form_submit_button(label='Aplicar Filtros 🚀')
 
-# --- HERRAMIENTA DE DEBUG PARA EL MAPA ---
-# (Mantenemos el resto del sidebar fuera del 'form')
+
+# --- *** NUEVO ORDEN *** ---
+# --- APLICAR FILTROS AL DATAFRAME ---
+# Este bloque AHORA está ANTES de que se use 'df_filtrado'
+fecha_inicio = pd.to_datetime(fecha_inicio)
+fecha_fin = pd.to_datetime(fecha_fin)
+df_filtrado = df[
+    (df['fecha_de_diagnostico'] >= fecha_inicio) &
+    (df['fecha_de_diagnostico'] <= fecha_fin) &
+    (df['nombre_departamento'].isin(deptos_seleccionados)) &
+    (df['grupo_edad'].isin(edades_seleccionadas))
+]
+
+# --- HERRAMIENTAS DE DEBUG EN SIDEBAR ---
+# Ahora esto funcionará, porque 'df_filtrado' ya existe
 st.sidebar.subheader("Ayuda para el Mapa (Debug)")
 if st.sidebar.checkbox("Mostrar nombres de departamentos"):
     st.sidebar.write("**Nombres en tu CSV (normalizados):**")
@@ -113,18 +126,9 @@ if st.sidebar.checkbox("Mostrar nombres de departamentos"):
     st.sidebar.info("Compara las listas. Si un nombre no coincide, añádelo al diccionario 'replacements'.")
 
 if st.sidebar.checkbox("Mostrar datos crudos filtrados"):
-    st.header("Datos Filtrados")
-    st.dataframe(df_filtrado.head(50))
+    st.sidebar.header("Datos Filtrados") 
+    st.sidebar.dataframe(df_filtrado.head(50))
 
-# --- APLICAR FILTROS AL DATAFRAME ---
-fecha_inicio = pd.to_datetime(fecha_inicio)
-fecha_fin = pd.to_datetime(fecha_fin)
-df_filtrado = df[
-    (df['fecha_de_diagnostico'] >= fecha_inicio) &
-    (df['fecha_de_diagnostico'] <= fecha_fin) &
-    (df['nombre_departamento'].isin(deptos_seleccionados)) &
-    (df['grupo_edad'].isin(edades_seleccionadas))
-]
 
 # --- FASE 2: CREACIÓN DEL DASHBOARD ---
 st.title("Dashboard de Análisis COVID-19 en Colombia 🇨🇴")
@@ -151,7 +155,7 @@ col4.metric("Tasa de Letalidad", f"{tasa_letalidad:.2f}%")
 
 st.write("---")
 
-# --- INICIA EL CAMBIO: Verificamos si el DataFrame filtrado está vacío ---
+# Verificamos si el DataFrame filtrado está vacío
 if df_filtrado.empty:
     st.warning("No se encontraron datos para los filtros seleccionados. Por favor, amplía tu búsqueda.")
 else:
