@@ -22,10 +22,10 @@ def load_data(file_path):
         df = pd.read_csv(file_path, compression='zip') # Leemos el ZIP
     except FileNotFoundError:
         st.error(f"Error: No se encontró el archivo en {file_path}.")
-        return None, None
+        return None, None, None
     except Exception as e:
         st.error(f"Error al cargar el archivo: {e}")
-        return None, None
+        return None, None, None
 
     # Normalizar nombres de columnas
     nuevas_columnas = df.columns.str.lower().str.replace(' ', '_', regex=False).str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8')
@@ -36,6 +36,10 @@ def load_data(file_path):
     for col in date_cols:
         df[col] = pd.to_datetime(df[col], errors='coerce')
     df['edad'] = pd.to_numeric(df['edad'], errors='coerce')
+    
+    bins = [0, 18, 30, 50, 70, 110]
+    labels = ['0-17', '18-29', '30-49', '50-69', '70+']
+    df['grupo_edad'] = pd.cut(df['edad'], bins=bins, labels=labels, right=False)
     
     # --- PREPARACIÓN PARA EL MAPA ---
     df['departamento_mapa'] = df['nombre_departamento'].str.upper()
@@ -61,13 +65,13 @@ def load_data(file_path):
         colombia_geojson = response.json()
     except Exception as e:
         st.error(f"Error al cargar el mapa GeoJSON: {e}")
-        return df, None
+        return df, None, labels
         
-    return df, colombia_geojson
+    return df, colombia_geojson, labels
 
 # --- CARGA DE DATOS ---
-file_path = 'casos_covid_colombia_PROCESADO.zip' # Apuntamos al ZIP
-df, colombia_geojson = load_data(file_path)
+file_path = 'casos_covid_colombia_PROCESADO.zip'
+df, colombia_geojson, labels_edad = load_data(file_path)
 
 if df is None:
     st.stop()
@@ -75,6 +79,8 @@ if df is None:
 # --- FASE 3: FILTROS INTERACTIVOS (CON BOTÓN) ---
 st.sidebar.header("Filtros Interactivos")
 
+# --- *** INICIO DEL CAMBIO *** ---
+# TODOS los inputs van DENTRO del formulario
 with st.sidebar.form(key='filtro_form'):
     min_fecha = df['fecha_de_diagnostico'].min().date()
     max_fecha = df['fecha_de_diagnostico'].max().date()
@@ -90,20 +96,24 @@ with st.sidebar.form(key='filtro_form'):
         departamentos,
         default=departamentos
     )
-    bins = [0, 18, 30, 50, 70, 110]
-    labels = ['0-17', '18-29', '30-49', '50-69', '70+']
-    df['grupo_edad'] = pd.cut(df['edad'], bins=bins, labels=labels, right=False)
     edades_seleccionadas = st.multiselect(
         "Selecciona Grupos de Edad:",
-        labels,
-        default=labels
+        labels_edad,
+        default=labels_edad
     )
+    
+    st.sidebar.subheader("Opciones de Depuración")
+    check_nombres_mapa = st.checkbox("Mostrar nombres de departamentos")
+    check_datos_crudos = st.checkbox("Mostrar datos crudos filtrados")
+    
+    # --- EL BOTÓN PARA APLICAR FILTROS ---
     submit_button = st.form_submit_button(label='Aplicar Filtros 🚀')
 
+# --- *** FIN DEL CAMBIO *** ---
 
-# --- *** NUEVO ORDEN *** ---
+
 # --- APLICAR FILTROS AL DATAFRAME ---
-# Este bloque AHORA está ANTES de que se use 'df_filtrado'
+# Este código ahora solo se ejecuta con los valores del formulario
 fecha_inicio = pd.to_datetime(fecha_inicio)
 fecha_fin = pd.to_datetime(fecha_fin)
 df_filtrado = df[
@@ -114,9 +124,10 @@ df_filtrado = df[
 ]
 
 # --- HERRAMIENTAS DE DEBUG EN SIDEBAR ---
-# Ahora esto funcionará, porque 'df_filtrado' ya existe
+# Esto ahora usa los valores 'check_nombres_mapa' y 'check_datos_crudos'
+# que se capturaron DENTRO del formulario
 st.sidebar.subheader("Ayuda para el Mapa (Debug)")
-if st.sidebar.checkbox("Mostrar nombres de departamentos"):
+if check_nombres_mapa:
     st.sidebar.write("**Nombres en tu CSV (normalizados):**")
     st.sidebar.dataframe(sorted(df['departamento_mapa'].unique()))
     if colombia_geojson:
@@ -125,7 +136,7 @@ if st.sidebar.checkbox("Mostrar nombres de departamentos"):
         st.sidebar.dataframe(nombres_mapa)
     st.sidebar.info("Compara las listas. Si un nombre no coincide, añádelo al diccionario 'replacements'.")
 
-if st.sidebar.checkbox("Mostrar datos crudos filtrados"):
+if check_datos_crudos:
     st.sidebar.header("Datos Filtrados") 
     st.sidebar.dataframe(df_filtrado.head(50))
 
